@@ -179,4 +179,29 @@ void UpsampleNearestNeighbour_1D(
 	}
 }
 
+template<
+	unsigned  NumChannels,	// Channels per element
+	typename  In_t			// Per-channel input type
+>
+void UpsampleNearestNeighbourDyn_1D(
+        hls::stream<ap_uint<NumChannels * In_t::width>> &src,
+        hls::stream<ap_uint<NumChannels * In_t::width>> &dst,
+		unsigned Scale,
+		unsigned IFMDim
+) {
+#pragma HLS inline off
+#pragma HLS stable variable=Scale
+	using buf_t = ap_uint<NumChannels * In_t::width>;
+	buf_t buf;
+	unsigned  rep = 0;
+	loop1: for(unsigned  i = 0; i < IFMDim; i++) {
+		loop2: for(unsigned  i = 0; i < Scale; i++) {
+#pragma HLS pipeline II=1 style=flp
+			if(rep == 0) buf = src.read();
+			dst.write(buf);
+			if(rep == Scale-1) {rep = 0;} else {rep++;}
+		}
+	}
+}
+
 #endif
