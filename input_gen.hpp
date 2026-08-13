@@ -77,6 +77,7 @@ public:
 	static constexpr unsigned  fp_rewind = 0;
 
 	static constexpr int  max_rp_retract = 0;
+	static constexpr unsigned  max_occupancy = 0;
 
 public:
 	std::tuple<int, unsigned, ap_int<1>> tick() {
@@ -120,6 +121,14 @@ private:
 	static constexpr int  terminal_rp_inc = W - rp_rewind;
 public:
 	static constexpr int  max_rp_retract = std::max(-terminal_rp_inc, Inner::max_rp_retract);
+
+private:
+	static constexpr unsigned  occ_gap   = rp_rewind - fp_rewind;
+	static constexpr unsigned  occ_burst = R? (Inner::rp_rewind - Inner::fp_rewind)
+	                                          + (W > fp_rewind? W - fp_rewind : 0) : 0;
+public:
+	static constexpr unsigned  max_occupancy =
+		std::max(std::max(occ_gap, occ_burst), Inner::max_occupancy);
 
 private:
 	static_assert(N > 0, "Must have positive iteration count.");
@@ -175,7 +184,9 @@ void input_gen(
 	constexpr unsigned  WP_DELAY = 4;
 
 	using  MyNest = Nest<true, V...>;
-	constexpr unsigned  ADDR_BITS = clog2(MyNest::max_rp_retract + WP_DELAY + 2);
+	// read-free gap plus the write-ahead headroom 
+	// From RTL input gen
+	constexpr unsigned  ADDR_BITS = clog2(MyNest::max_occupancy + WP_DELAY + 2);
 	constexpr unsigned  BUF_SIZE  = 1 << ADDR_BITS;
 	using  ptr_t = ap_int<1 + ADDR_BITS>;
 
@@ -222,12 +233,17 @@ void input_gen(
 		obuf.dat = buf[ap_uint<ADDR_BITS>(rp)];
 
 		if(/* rp < wp */ ptr_t(rp-wp[WP_DELAY-1]) < 0) {
-			auto const  t = nest.tick();
-			rp += std::get<0>(t);
-			fp += std::get<1>(t);
+			MyNest const  saved = nest;
+			auto const    t = nest.tick();
+			ptr_t const   fp_next = fp + std::get<1>(t);
+			if(/* fp' <= wp */ ptr_t(fp_next-wp[WP_DELAY-1]) <= 0) {
+				rp += std::get<0>(t);
+				fp  = fp_next;
 
-			if(M >= 0)  obuf.lst = std::get<2>(t)[M];
-			ovld = true;
+				if(M >= 0)  obuf.lst = std::get<2>(t)[M];
+				ovld = true;
+			}
+			else  nest = saved;
 		}
 	}
 
